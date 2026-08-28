@@ -1,0 +1,13 @@
+# ビルド生成物
+*.exe
+*.syso
+btycsv
+btycsv_linux
+
+# 実行時に生成されるもの
+selectors.json
+work/
+*.csv
+probe_*.html
+nohup.out
+run.log

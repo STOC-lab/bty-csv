@@ -1,0 +1,11 @@
+# 改行コードの自動変換を無効化する。
+# バイナリ混入や環境差によるビルド不整合を防ぐため。
+* -text
+*.go   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+*.md   text eol=lf
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.manifest text eol=lf
+*.syso binary
