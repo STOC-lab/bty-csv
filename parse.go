@@ -10,7 +10,7 @@ import (
 
 var (
 	reTag     = regexp.MustCompile(`<[^>]*>`)
-	reSpace   = regexp.MustCompile(`[ \t\r\n\x{3000}]+`)
+	reSpace   = regexp.MustCompile(`[ \t\r\n\x{3000}\x{00a0}]+`)
 	reZip     = regexp.MustCompile(`〒?\s*(\d{3})-?(\d{4})`)
 	reSlnCode = regexp.MustCompile(`/(slnH\w+)`)
 	reDigits  = regexp.MustCompile(`[\d,]+`)
@@ -108,6 +108,9 @@ type Record struct {
 	Rating    string
 	ReviewCnt string
 	URL       string
+	Lat       string
+	Lng       string
+	Area      string
 }
 
 func (r Record) Row() []string {
@@ -116,6 +119,7 @@ func (r Record) Row() []string {
 		r.Phone, r.Zip, r.Address, r.Access, r.Hours, r.Closed,
 		r.Payment, r.Homepage, r.CutPrice, r.Seats, r.StaffCnt,
 		r.Parking, r.Features, r.Note, r.Rating, r.ReviewCnt, r.URL,
+		r.Lat, r.Lng, r.Area,
 	}
 }
 
@@ -124,9 +128,14 @@ var CSVHeader = []string{
 	"電話番号", "郵便番号", "住所", "アクセス・道案内", "営業時間", "定休日",
 	"支払い方法", "お店のホームページ", "カット価格", "設備／席数", "スタッフ数",
 	"駐車場", "こだわり条件", "備考", "サロン平均点", "口コミ数", "ページURL",
+	"緯度", "経度", "エリア",
 }
 
 // ParseDetail は詳細ページHTMLからレコードを組み立てる。
+//
+// 優先順位は JSON-LD > テーブル > 正規表現。
+// JSON-LD (schema.org) は正規化済みで、サイトのマークアップ改修に強い。
+// テーブルは JSON-LD に無い項目（営業時間・定休日・席数など）を補う。
 func ParseDetail(body, url, catLabel string, s Selectors) Record {
 	L := s.TableLabels
 	get := func(k string) string {
@@ -136,21 +145,51 @@ func ParseDetail(body, url, catLabel string, s Selectors) Record {
 		}
 		return tableCell(body, s.TableCellTmpl, lbl)
 	}
+	// 先に埋まっている方を採用する
+	pick := func(vs ...string) string {
+		for _, v := range vs {
+			if v != "" {
+				return v
+			}
+		}
+		return ""
+	}
 
-	addrRaw := get("住所")
-	zip := ""
-	addr := addrRaw
+	ld := ExtractSalonLD(body)
+	var ldName, ldPhone, ldAddr, ldDesc, ldPrice, ldRating, ldReview, lat, lng string
+	if ld != nil {
+		ldName = ld.Name
+		ldPhone = ld.Telephone
+		ldAddr = ld.AddressText()
+		ldDesc = ld.Description
+		ldPrice = ld.PriceRange
+		if ld.Geo != nil {
+			lat = strconv.FormatFloat(ld.Geo.Lat, 'f', -1, 64)
+			lng = strconv.FormatFloat(ld.Geo.Lng, 'f', -1, 64)
+		}
+		if ld.AggregateRating != nil {
+			ldRating = ldFloat(ld.AggregateRating.RatingValue)
+			ldReview = ldFloat(ld.AggregateRating.ReviewCount)
+		}
+	}
+
+	// 住所: JSON-LD 優先、無ければテーブル。郵便番号があれば分離する。
+	addrRaw := pick(ldAddr, get("住所"))
+	zip, addr := "", addrRaw
 	if m := reZip.FindStringSubmatch(addrRaw); m != nil {
 		zip = m[1] + "-" + m[2]
 		addr = strings.TrimSpace(reZip.ReplaceAllString(addrRaw, ""))
 	}
 
-	access := get("アクセス")
-	if g := get("道案内"); g != "" {
-		if access != "" {
-			access += " / " + g
-		} else {
-			access = g
+	// アクセス: 現行は「アクセス・道案内」に統合済み。旧2項目も拾う。
+	access := get("アクセス・道案内")
+	if access == "" {
+		a, g := get("アクセス"), get("道案内")
+		switch {
+		case a != "" && g != "":
+			access = a + " / " + g
+		default:
+			access = pick(a, g)
 		}
 	}
 
@@ -159,23 +198,33 @@ func ParseDetail(body, url, catLabel string, s Selectors) Record {
 		code = m[1]
 	}
 
-	rating := firstMatch(body, s.Rating)
-	if m := reFloat.FindString(rating); m != "" {
-		rating = m
+	// 評価: JSON-LD 優先、無ければ正規表現から数値を切り出す。
+	rating := ldRating
+	if rating == "" {
+		if m := reFloat.FindString(firstMatch(body, s.Rating)); m != "" {
+			rating = m
+		}
 	}
-	rc := firstMatch(body, s.ReviewCnt)
-	if m := reDigits.FindString(rc); m != "" {
-		rc = strings.ReplaceAll(m, ",", "")
+	rc := ldReview
+	if rc == "" {
+		if m := reDigits.FindString(firstMatch(body, s.ReviewCnt)); m != "" {
+			rc = strings.ReplaceAll(m, ",", "")
+		}
 	}
+
+	_, area := BreadcrumbArea(body)
+
+	// 席数は「設備／席数」列へ。ラベルは現行「席数」、旧「設備数」。
+	seats := pick(get("席数"), get("設備数"))
 
 	return Record{
 		Code:      code,
-		Name:      firstMatch(body, s.SalonName),
+		Name:      pick(ldName, firstMatch(body, s.SalonName)),
 		Kana:      firstMatch(body, s.SalonKana),
-		Intro:     firstMatch(body, s.Catchphrase),
-		Condition: get("こだわり条件"),
+		Intro:     pick(ldDesc, firstMatch(body, s.Catchphrase)),
+		Condition: get("その他"),
 		Category:  catLabel,
-		Phone:     firstMatch(body, s.Phone),
+		Phone:     pick(ldPhone, firstMatch(body, s.Phone)),
 		Zip:       zip,
 		Address:   addr,
 		Access:    access,
@@ -183,8 +232,8 @@ func ParseDetail(body, url, catLabel string, s Selectors) Record {
 		Closed:    get("定休日"),
 		Payment:   get("支払い方法"),
 		Homepage:  get("お店のホームページ"),
-		CutPrice:  get("カット価格"),
-		Seats:     get("設備／席数"),
+		CutPrice:  pick(get("カット価格"), ldPrice),
+		Seats:     seats,
 		StaffCnt:  get("スタッフ数"),
 		Parking:   get("駐車場"),
 		Features:  get("こだわり条件"),
@@ -192,6 +241,9 @@ func ParseDetail(body, url, catLabel string, s Selectors) Record {
 		Rating:    rating,
 		ReviewCnt: rc,
 		URL:       url,
+		Lat:       lat,
+		Lng:       lng,
+		Area:      area,
 	}
 }
 

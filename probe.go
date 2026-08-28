@@ -92,18 +92,59 @@ func Probe(cfg *Config, pref int, catKey, detailURL string) error {
 	os.WriteFile("probe_detail.html", []byte(dbody), 0644)
 	fmt.Print("生HTMLを probe_detail.html に保存しました。\n\n")
 
-	fmt.Println("--- 詳細セレクタ（個別要素） ---")
-	report("電話番号", dbody, s.Phone)
-	report("店舗名", dbody, s.SalonName)
+	fmt.Println("--- JSON-LD ---")
+	ld := ExtractSalonLD(dbody)
+	if ld == nil {
+		fmt.Println("  [NG] サロンの JSON-LD が見つかりません。テーブル解析にフォールバックします。")
+	} else {
+		fmt.Printf("  [OK] @type=%s\n", ld.Type)
+		for _, kv := range [][2]string{
+			{"name", ld.Name}, {"telephone", ld.Telephone},
+			{"address", ld.AddressText()}, {"description", ld.Description},
+			{"priceRange", ld.PriceRange},
+		} {
+			mark := "NG"
+			if kv[1] != "" {
+				mark = "OK"
+			}
+			fmt.Printf("    [%s] %-12s %s\n", mark, kv[0], truncate(kv[1], 45))
+		}
+		if ld.Geo != nil {
+			fmt.Printf("    [OK] %-12s %v, %v\n", "geo", ld.Geo.Lat, ld.Geo.Lng)
+		} else {
+			fmt.Printf("    [NG] %-12s\n", "geo")
+		}
+		if ld.AggregateRating != nil {
+			fmt.Printf("    [OK] %-12s %s点 / %s件\n", "rating",
+				ldFloat(ld.AggregateRating.RatingValue),
+				ldFloat(ld.AggregateRating.ReviewCount))
+		} else {
+			fmt.Printf("    [NG] %-12s\n", "rating")
+		}
+	}
+	if svc, area := BreadcrumbArea(dbody); svc != "" || area != "" {
+		fmt.Printf("  [OK] パンくず: %s / %s\n", svc, area)
+	}
+
+	fmt.Println("\n--- 詳細ページの <th> ラベル一覧（実物） ---")
+	thRe := regexp.MustCompile(`<th[^>]*>([^<]{1,20})</th>`)
+	thSeen := map[string]bool{}
+	for _, m := range thRe.FindAllStringSubmatch(dbody, -1) {
+		v := strings.TrimSpace(m[1])
+		if v != "" && !thSeen[v] {
+			thSeen[v] = true
+			fmt.Printf("    %s\n", v)
+		}
+	}
+
+	fmt.Println("\n--- 個別要素セレクタ（JSON-LD が無い場合の予備） ---")
 	report("店舗名カナ", dbody, s.SalonKana)
-	report("紹介文", dbody, s.Catchphrase)
-	report("平均点", dbody, s.Rating)
-	report("口コミ数", dbody, s.ReviewCnt)
+	report("電話番号", dbody, s.Phone)
 
 	fmt.Println("\n--- 詳細セレクタ（ラベル駆動テーブル） ---")
-	keys := []string{"住所", "アクセス", "道案内", "営業時間", "定休日",
-		"支払い方法", "設備／席数", "スタッフ数", "カット価格",
-		"駐車場", "こだわり条件", "お店のホームページ", "備考", "責任者情報"}
+	keys := []string{"住所", "アクセス・道案内", "営業時間", "定休日",
+		"支払い方法", "席数", "スタッフ数", "カット価格",
+		"駐車場", "こだわり条件", "お店のホームページ", "備考", "その他"}
 	okCnt := 0
 	for _, k := range keys {
 		lbl := s.TableLabels[k]
@@ -125,10 +166,21 @@ func Probe(cfg *Config, pref int, catKey, detailURL string) error {
 	fmt.Printf("\n===== 判定 =====\n")
 	fmt.Printf("テーブル項目: %d/%d 成功\n", okCnt, len(keys))
 	if rec.Phone != "" {
-		fmt.Println("電話番号: HTMLに直接含まれています（JSレンダリング不要）")
+		fmt.Printf("電話番号: %s（取得できています）\n", rec.Phone)
 	} else {
-		fmt.Println("電話番号: 取得できず。probe_detail.html で確認してください。")
-		fmt.Println("  → HTMLに無ければ JS レンダリングに変更されたということです。")
+		fmt.Println("電話番号: 取得できず。probe_detail.html を確認してください。")
+	}
+	filled := 0
+	for _, v := range rec.Row() {
+		if v != "" {
+			filled++
+		}
+	}
+	fmt.Printf("CSV列の充足: %d/%d\n", filled, len(CSVHeader))
+	if filled >= len(CSVHeader)-4 {
+		fmt.Println("→ 本取得に進んで問題ありません。")
+	} else {
+		fmt.Println("→ 空欄が多いので selectors.json の調整を推奨します。")
 	}
 	return nil
 }

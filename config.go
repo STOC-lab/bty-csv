@@ -69,7 +69,7 @@ func DefaultConfig() *Config {
 		},
 		ServiceAreaCd: map[string]string{},
 		Selectors: Selectors{
-			// --- bty_csv.exe から抽出した原文パターン（2026-03時点） ---
+			// --- 2026-08 実測ベース ---
 			ResultCount: []string{
 				`(?s)<p><span class="numberOfResult">(.*?)</span>`,
 				`(?s)<span class="numberOfResult">(.*?)</span>`,
@@ -80,11 +80,16 @@ func DefaultConfig() *Config {
 				`(?s)<h3 class="slcHead"><a href="(.*?)"`,
 				`(?s)<p class="clinic__name"><a href="(.*?)"`,
 			},
+			// 詳細ページは <th class="w120">ラベル</th><td ...>値</td> 形式。
+			// td のクラスは w618 / w620 / w208 などバラバラなので属性は問わない。
 			TableCellTmpl: []string{
+				`(?s)<th[^>]*>%s</th>\s*<td[^>]*>(.*?)</td>`,
+				`(?s)<th[^>]*>%s</th><td[^>]*>(.*?)</td>`,
+				// 旧レイアウト（2026-03以前）互換
 				`(?s)<p class="c-paragraph">%s</p></th><td class="table__cell"><p class="c-paragraph">(.*?)</p></td></tr>`,
 				`(?s)<p class="c-paragraph">%s</p></th><td class="table__cell">(.*?)</td></tr>`,
-				`(?s)<p class="c-paragraph">%s</p></th><td class="table__cell">(.*?)</table></td></tr>`,
 			},
+			// 以下は JSON-LD が取れなかった場合のフォールバック。
 			Phone: []string{
 				`(?s)<p class="contact-modal__phone-number">(.*?)</p>`,
 			},
@@ -93,33 +98,28 @@ func DefaultConfig() *Config {
 				`(?s)<h1[^>]*>(.*?)</h1>`,
 			},
 			SalonKana: []string{
-				`(?s)<p class="fs10 mT5">(.*?)</p>`,
+				`(?s)<span class="fs10 fgGray">(.*?)</span>`,
 			},
 			Catchphrase: []string{
-				`(?s)<p class="clinic-overview__catchphrase">(.*?)</p>`,
-				`(?s)<p class="mT10 fs14 b">(.*?)</p>`,
+				`(?s)<p class="mT5 fs16 b">(.*?)</p>`,
 			},
-			Rating: []string{
-				`(?s)<span class="[^"]*ratingValue[^"]*">(.*?)</span>`,
-			},
-			ReviewCnt: []string{
-				`(?s)<em class="[^"]*count[^"]*">(.*?)</em>`,
-			},
+			Rating:    []string{`(?s)<span class="[^"]*ratingValue[^"]*">(.*?)</span>`},
+			ReviewCnt: []string{`(?s)<em class="[^"]*count[^"]*">(.*?)</em>`},
 			TableLabels: map[string]string{
-				"住所":       "住所",
-				"アクセス":     "アクセス",
-				"道案内":      "道案内",
-				"駐車場":      "駐車場",
-				"営業時間":     "営業時間",
-				"定休日":      "定休日",
-				"支払い方法":    "クレジットカード",
-				"設備／席数":    "設備数",
-				"スタッフ数":    "スタッフ数",
-				"カット価格":    "カット価格",
-				"こだわり条件":   "こだわり条件",
+				"住所":        "住所",
+				"アクセス・道案内":  "アクセス・道案内",
+				"営業時間":      "営業時間",
+				"定休日":       "定休日",
+				"支払い方法":     "支払い方法",
+				"席数":        "席数",
+				"スタッフ数":     "スタッフ数",
+				"カット価格":     "カット価格",
+				"駐車場":       "駐車場",
+				"こだわり条件":    "こだわり条件",
 				"お店のホームページ": "お店のホームページ",
-				"備考":       "備考",
-				"責任者情報":    "責任者情報",
+				"備考":        "備考",
+				"その他":       "その他",
+				"電話番号":      "電話番号",
 			},
 		},
 		UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
